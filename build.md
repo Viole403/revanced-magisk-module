@@ -1,7 +1,7 @@
-Music (arm64-v8a): 7.03.52  
 Music (arm-v7a): 7.03.52  
-Twitter: 10.45.1-release.0  
+Music (arm64-v8a): 7.03.52  
 YouTube: 19.16.39  
+Twitter: 10.45.1-release.0  
 Photomath: 8.37.0  
 Reddit-Extended: 2024.17.0  
 TikTok: 32.5.3  
