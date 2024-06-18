@@ -63,9 +63,11 @@ archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.reddit.frontpage
 
 [Lightroom]
 apkmirror-dlurl = "https://www.apkmirror.com/apk/adobe/lightroom/"
+apkmirror-dpi = "120-640dpi"
+arch = "arm64-v8a"
 
 [Vsco]
-apkmirror-dlurl = "https://www.apkmirror.com/apk/vsco/"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/vsco/vsco-photo-video-editor-3/"
 
 [Photomath]
 apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/photomath/"
