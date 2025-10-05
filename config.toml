@@ -23,7 +23,7 @@ uptodown-dlurl = "https://youtube-music.en.uptodown.com/android"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.apps.youtube.music"
 
 [GooglePhotos]
-build-mode = "both"
+build-mode = "apk"
 arch = "both"
 version = "auto"
 apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/photos/"
@@ -31,7 +31,7 @@ uptodown-dlurl = "https://google-photos.en.uptodown.com/android"
 
 [Spotify]
 enabled = true
-build-mode = "both"
+build-mode = "apk"
 version = "auto"
 patches-source = "anddea/revanced-patches"
 uptodown-dlurl = "https://spotify.en.uptodown.com/android"
@@ -67,16 +67,16 @@ uptodown-dlurl = "https://twitch.en.uptodown.com/android"
 enabled = true
 apkmirror-dlurl = "https://www.apkmirror.com/apk/x-corp/twitter"
 version = "auto"
-# build-mode = "apk"
-dpi = "120-640dpi"
+build-mode = "apk"
+# dpi = "120-640dpi"
 # archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.twitter.android"
 
 [TikTok]
 enabled = true
-build-mode = "both"
-version = "auto"
-uptodown-dlurl = "https://tiktok.en.uptodown.com/android"
+# build-mode = "apk"
+# version = "auto"
 apkmirror-dlurl = "https://apkmirror.com/apk/tiktok-pte-ltd/tik-tok-including-musical-ly"
+uptodown-dlurl = "https://tiktok.en.uptodown.com/android"
 # archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.zhiliaoapp.musically"
 # included-patches = "'SIM spoof'"
 
@@ -91,19 +91,24 @@ apkmirror-dlurl = "https://www.apkmirror.com/apk/smart-launcher-team/icon-pack-s
 
 [Duolingo]
 enabled = true
+included-patches = "'Disable ads'"
+exclusive-patches = true
+arch = "all"
 apkmirror-dpi = "120-640dpi"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/duolingo/duolingo-duolingo/"
+apkmirror-dlurl = "https://apkmirror.com/apk/duolingo/duolingo-duolingo/"
 uptodown-dlurl = "https://duolingo.en.uptodown.com/android"
 
 [Crunchyroll]
 enabled = true
-apkmirror-dlurl = "https://www.apkmirror.com/apk/crunchyroll/crunchyroll/"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/crunchyroll-llc-2/crunchyroll/"
 uptodown-dlurl = "https://crunchyroll.en.uptodown.com/android"
 # archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.crunchyroll.crunchyroid"
 
 [Instagram]
 enabled = true
 version = "auto"
+build-mode = "apk"
+arch = "both"
+apkmirror-dlurl = "https://apkmirror.com/apk/instagram/instagram-instagram"
 uptodown-dlurl = "https://instagram.en.uptodown.com/android"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/instagram/instagram-instagram"
 # arch = "arm64-v8a"
