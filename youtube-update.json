@@ -1,6 +1,6 @@
 {
   "version": "v20.14.43 (patches 5.41.0)",
-  "versionCode": 2,
-  "zipUrl": "https://github.com/Viole403/revanced-magisk-module/releases/download/2/youtube-revanced-magisk-v20.14.43-all.zip",
+  "versionCode": 4,
+  "zipUrl": "https://github.com/Viole403/revanced-magisk-module/releases/download/4/youtube-revanced-magisk-v20.14.43-all.zip",
   "changelog": "https://raw.githubusercontent.com/Viole403/revanced-magisk-module/update/build.md"
 }
