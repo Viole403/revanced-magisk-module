@@ -266,10 +266,64 @@ isoneof() {
 merge_splits() {
 	local bundle=$1 output=$2
 	pr "Merging splits"
-	gh_dl "$TEMP_DIR/apkeditor.jar" "https://github.com/REAndroid/APKEditor/releases/download/V1.4.2/APKEditor-1.4.2.jar" >/dev/null || return 1
+	gh_dl "$TEMP_DIR/apkeditor.jar" "https://github.com/REAndroid/APKEditor/releases/download/V1.4.5/APKEditor-1.4.5.jar" >/dev/null || return 1
 	if ! OP=$(java -jar "$TEMP_DIR/apkeditor.jar" merge -i "${bundle}" -o "${bundle}.mzip" -clean-meta -f 2>&1); then
-		epr "Apkeditor ERROR: $OP"
-		return 1
+		# Save full apkeditor output to a log for debugging, but show a concise message to the user
+		mkdir -p "$TEMP_DIR" || :
+		log_file="$TEMP_DIR/$(basename "${bundle}").apkeditor.log"
+		printf '%s
+' "$OP" >"$log_file" 2>/dev/null || :
+		pr "Apkeditor failed to merge '${bundle}' (see: ${log_file}). Attempting unzip-based fallback."
+		# Apkeditor sometimes fails on certain bundle formats. Try a simple unzip-based fallback:
+		pr "Attempting fallback merge for ${bundle} (unzip-based)"
+		mkdir -p "${bundle}-zip-fallback"
+		if unzip -qo "${bundle}" -d "${bundle}-zip-fallback" 2>/dev/null || unzip -qo "${bundle}.apkm" -d "${bundle}-zip-fallback" 2>/dev/null; then
+			# search recursively for any apk files inside the extracted folder
+			mapfile -t apks < <(find "${bundle}-zip-fallback" -type f -iname "*.apk" 2>/dev/null || true)
+			if (( ${#apks[@]} )); then
+				if (( ${#apks[@]} == 1 )); then
+					pr "Fallback: found single APK ${apks[0]}, using it as output"
+					cp -f "${apks[0]}" "${output}"
+					rm -rf "${bundle}-zip-fallback"
+					return 0
+				else
+					pr "Fallback: found ${#apks[@]} APK files, zipping extracted contents"
+					(cd "${bundle}-zip-fallback" && zip -0rq "${CWD}/${bundle}.zip" .)
+					if isoneof "module" "${build_mode_arr[@]}"; then
+						patch_apk "${bundle}.zip" "${output}" "--exclusive" "${args[cli]}" "${args[ptjar]}"
+						local ret=$?
+					else
+						cp "${bundle}.zip" "${output}"
+						local ret=$?
+					fi
+					rm -rf "${bundle}-zip-fallback" "${bundle}.zip" || :
+					return $ret
+				fi
+			else
+				# No nested .apk files; check if the extracted folder looks like an APK contents
+				if find "${bundle}-zip-fallback" -maxdepth 1 -type f \( -iname "classes.dex" -o -iname "AndroidManifest.xml" \) | read -r _; then
+					pr "Fallback: archive contains APK contents (classes.dex/AndroidManifest.xml). Zipping contents."
+					(cd "${bundle}-zip-fallback" && zip -0rq "${CWD}/${bundle}.zip" .)
+					if isoneof "module" "${build_mode_arr[@]}"; then
+						patch_apk "${bundle}.zip" "${output}" "--exclusive" "${args[cli]}" "${args[ptjar]}"
+						local ret=$?
+					else
+						cp "${bundle}.zip" "${output}"
+						local ret=$?
+					fi
+					rm -rf "${bundle}-zip-fallback" "${bundle}.zip" || :
+					return $ret
+				else
+					epr "Fallback: no .apk files found inside ${bundle}"
+					rm -rf "${bundle}-zip-fallback"
+					return 1
+				fi
+			fi
+		else
+			epr "Fallback unzip failed for ${bundle}"
+			rm -rf "${bundle}-zip-fallback"
+			return 1
+		fi
 	fi
 	# this is required because of apksig
 	mkdir "${bundle}-zip"
@@ -411,6 +465,11 @@ dl_uptodown() {
 	data_url=$($HTMLQ "#detail-download-button" --attribute data-url <<<"$resp") || return 1
 	if [ $is_bundle = true ]; then
 		req "https://dw.uptodown.com/dwn/${data_url}" "$output.apkm" || return 1
+		# sanity check: ensure the downloaded file is an archive and not an HTML error page
+		if grep -Iq "<html" "$output.apkm" 2>/dev/null; then
+			epr "Downloaded Uptodown bundle appears to be an HTML page (download failed or blocked)."
+			return 1
+		fi
 		merge_splits "${output}.apkm" "${output}"
 	else
 		req "https://dw.uptodown.com/dwn/${data_url}" "$output"
