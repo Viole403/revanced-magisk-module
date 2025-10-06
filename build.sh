@@ -48,8 +48,13 @@ fi
 if ((COMPRESSION_LEVEL > 9)) || ((COMPRESSION_LEVEL < 0)); then abort "compression-level must be within 0-9"; fi
 
 rm -rf revanced-magisk/bin/*/tmp.*
-if [ "$(echo "$TEMP_DIR"/*-rv/changelog.md)" ]; then
-	: >"$TEMP_DIR"/*-rv/changelog.md || :
+# Safely truncate all matching changelog files (avoid ambiguous redirect when glob expands to multiple files)
+shopt -s nullglob
+changelog_files=("$TEMP_DIR"/*-rv/changelog.md)
+if (( ${#changelog_files[@]} )); then
+	for _f in "${changelog_files[@]}"; do
+		: >"$_f" || :
+	done
 fi
 
 mkdir -p ${MODULE_TEMPLATE_DIR}/bin/arm64 ${MODULE_TEMPLATE_DIR}/bin/arm ${MODULE_TEMPLATE_DIR}/bin/x86 ${MODULE_TEMPLATE_DIR}/bin/x64
