@@ -1,10 +1,9 @@
 Crunchyroll: 3.92.2  
 Duolingo: 6.50.2  
 GooglePhotos (arm64-v8a): 7.48.0.813334473  
-Instagram: 400.0.0.49.68  
+Instagram: 401.0.0.48.79  
 Music (arm64-v8a): 8.10.52  
 Music (arm-v7a): 8.10.52  
-Spotify: 9.0.84.1340  
 TikTok: 36.5.4  
 YouTube: 20.14.43  
 
@@ -13,9 +12,9 @@ Use [zygisk-detach](https://github.com/j-hc/zygisk-detach) to detach root ReVanc
 
 [revanced-magisk-module](https://github.com/j-hc/revanced-magisk-module)
   
-Patches: anddea/patches-3.14.0.rvp  
-[Changelog](https://github.com/anddea/revanced-patches/releases/tag/v3.14.0)
-
 CLI: j-hc/revanced-cli-5.0.0-all.jar  
-Patches: ReVanced/patches-5.41.0.rvp  
-[Changelog](https://github.com/ReVanced/revanced-patches/releases/tag/v5.41.0)  
+Patches: ReVanced/patches-5.42.1.rvp  
+[Changelog](https://github.com/ReVanced/revanced-patches/releases/tag/v5.42.1)  
+
+Skipped:  
+Patches: anddea/patches-3.14.0.rvp    
