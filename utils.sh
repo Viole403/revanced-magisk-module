@@ -677,9 +677,13 @@ dl_apkpure() {
 		if curl --tlsv1.2 -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 30 --retry 2 -s -S \
 			-H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0" \
 			"$url" -o "$out" 2>/dev/null; then
-			# Verify we got actual data (file size > 1KB)
-			if [ -f "$out" ] && [ $(stat -c%s "$out" 2>/dev/null || stat -f%z "$out" 2>/dev/null) -gt 1024 ]; then
-				return 0
+			# Verify we got actual data (file size > 1MB to ensure it's not an error page)
+			local file_size=$(stat -c%s "$out" 2>/dev/null || stat -f%z "$out" 2>/dev/null || echo 0)
+			if [ -f "$out" ] && [ "$file_size" -gt 1048576 ]; then
+				# Additional check: make sure it's not an HTML error page
+				if ! head -c 100 "$out" 2>/dev/null | grep -qi "<html"; then
+					return 0
+				fi
 			fi
 		fi
 		return 1
@@ -689,14 +693,8 @@ dl_apkpure() {
 	download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=${ver_param}"
 	pr "Trying APKPure XAPK: $download_url"
 	if apkpure_dl "$download_url" "$temp_dl"; then
-		# Verify it's a valid download (not an error page)
-		if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
-			download_success=true
-			tried_formats+=("XAPK")
-		else
-			rm -f "$temp_dl"
-			tried_formats+=("XAPK (invalid)")
-		fi
+		download_success=true
+		tried_formats+=("XAPK")
 	else
 		rm -f "$temp_dl"
 		tried_formats+=("XAPK (failed)")
@@ -707,14 +705,8 @@ dl_apkpure() {
 		download_url="https://d.apkpure.com/b/APK/${pkg_name}?version=${ver_param}"
 		pr "Trying APKPure APK: $download_url"
 		if apkpure_dl "$download_url" "$temp_dl"; then
-			# Verify it's a valid download
-			if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
-				download_success=true
-				tried_formats+=("APK")
-			else
-				rm -f "$temp_dl"
-				tried_formats+=("APK (invalid)")
-			fi
+			download_success=true
+			tried_formats+=("APK")
 		else
 			rm -f "$temp_dl"
 			tried_formats+=("APK (failed)")
@@ -729,22 +721,21 @@ dl_apkpure() {
 
 	# Detect file type by checking magic bytes and content
 	local file_type=""
-	if file "$temp_dl" 2>/dev/null | grep -qi "zip"; then
-		# Check if it's a bundle (XAPK/APKM) or just a plain APK in zip format
-		if unzip -l "$temp_dl" 2>/dev/null | grep -qi "\.apk"; then
+	# Check magic bytes: PK header (zip) is 50 4B, APK also starts with PK
+	local magic_bytes=$(head -c 2 "$temp_dl" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+
+	if [ "$magic_bytes" = "504b" ] || [ "$magic_bytes" = "504B" ]; then
+		# It's a ZIP-based format, check if it's a bundle or single APK
+		if unzip -l "$temp_dl" 2>/dev/null | grep -qi "manifest.json\|\.apk"; then
+			# Has manifest.json or contains .apk files = it's a bundle (XAPK/APKM)
 			file_type="bundle"
 		else
+			# Single APK file (APKs are ZIP archives)
 			file_type="apk"
 		fi
-	elif file "$temp_dl" 2>/dev/null | grep -qi "apk\|android"; then
-		file_type="apk"
 	else
-		# Fallback: check if it's a valid zip (bundles are zips)
-		if unzip -t "$temp_dl" >/dev/null 2>&1; then
-			file_type="bundle"
-		else
-			file_type="apk"
-		fi
+		# If not a ZIP, assume it's a plain APK (though this is unlikely)
+		file_type="apk"
 	fi
 
 	pr "APKPure download successful (${tried_formats[-1]}, detected as ${file_type})"
@@ -1080,7 +1071,7 @@ module_prop() {
 name=${2}
 version=v${3}
 versionCode=${NEXT_VER_CODE}
-author=j-hc
+author=Viole403
 description=${4}" >"${6}/module.prop"
 
 	if [ "$ENABLE_MAGISK_UPDATE" = true ]; then echo "updateJson=${5}" >>"${6}/module.prop"; fi
