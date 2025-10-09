@@ -641,8 +641,12 @@ get_apkpure_resp() {
 }
 get_apkpure_vers() {
 	# APKPure blocks automated requests, so we can't reliably list versions
-	# Return "latest" as a placeholder to prevent empty version errors
-	echo "latest"
+	# If we previously detected an actual version, return it; otherwise return "latest"
+	if [ -n "${__APKPURE_ACTUAL_VERSION__-}" ]; then
+		echo "$__APKPURE_ACTUAL_VERSION__"
+	else
+		echo "latest"
+	fi
 }
 dl_apkpure() {
 	local apkpure_dlurl=$1 version=$2 output=$3 arch=$4 _dpi=$5
@@ -666,10 +670,25 @@ dl_apkpure() {
 	local download_success=false
 	local tried_formats=()
 
+	# APKPure-specific download function (without --fail flag to handle redirects better)
+	apkpure_dl() {
+		local url=$1 out=$2
+		# Remove --fail flag for APKPure downloads as they use multiple redirects
+		if curl --tlsv1.2 -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 30 --retry 2 -s -S \
+			-H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0" \
+			"$url" -o "$out" 2>/dev/null; then
+			# Verify we got actual data (file size > 1KB)
+			if [ -f "$out" ] && [ $(stat -c%s "$out" 2>/dev/null || stat -f%z "$out" 2>/dev/null) -gt 1024 ]; then
+				return 0
+			fi
+		fi
+		return 1
+	}
+
 	# Try XAPK endpoint first (bundles are more common for newer apps)
 	download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=${ver_param}"
 	pr "Trying APKPure XAPK: $download_url"
-	if req "$download_url" "$temp_dl" 2>/dev/null; then
+	if apkpure_dl "$download_url" "$temp_dl"; then
 		# Verify it's a valid download (not an error page)
 		if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
 			download_success=true
@@ -687,7 +706,7 @@ dl_apkpure() {
 	if [ "$download_success" = false ]; then
 		download_url="https://d.apkpure.com/b/APK/${pkg_name}?version=${ver_param}"
 		pr "Trying APKPure APK: $download_url"
-		if req "$download_url" "$temp_dl" 2>/dev/null; then
+		if apkpure_dl "$download_url" "$temp_dl"; then
 			# Verify it's a valid download
 			if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
 				download_success=true
@@ -729,6 +748,24 @@ dl_apkpure() {
 	fi
 
 	pr "APKPure download successful (${tried_formats[-1]}, detected as ${file_type})"
+
+	# If version was "latest", try to extract actual version before processing
+	local actual_version=""
+	if [ "$ver_param" = "latest" ]; then
+		if [ "$file_type" = "bundle" ]; then
+			# For bundles (XAPK), extract version from manifest.json
+			actual_version=$(unzip -p "$temp_dl" manifest.json 2>/dev/null | jq -r '.version_name // .versionName // empty' 2>/dev/null || echo "")
+		fi
+
+		if [ -n "$actual_version" ]; then
+			pr "Detected actual version from bundle manifest: $actual_version"
+			# Update output path to use actual version
+			local base_output="${output%-latest-*}"
+			local suffix="${output##*-latest-}"
+			output="${base_output}-${actual_version}-${suffix}"
+			__APKPURE_ACTUAL_VERSION__="$actual_version"
+		fi
+	fi
 
 	if [ "$file_type" = "bundle" ]; then
 		# It's a bundle (xapk/apks/apkm/zip) - merge it
@@ -789,8 +826,31 @@ check_sig() {
 	local file=$1 pkg_name=$2
 	local sig
 	if grep -q "$pkg_name" sig.txt; then
-		sig=$(java -jar "$APKSIGNER" verify --print-certs "$file" | grep ^Signer | grep SHA-256 | tail -1 | awk '{print $NF}')
-		grep -qFx "$sig $pkg_name" sig.txt
+		# Get all signatures from the APK (apps can have multiple signers)
+		local sigs
+		sigs=$(java -jar "$APKSIGNER" verify --print-certs "$file" 2>&1 | grep "^Signer.*certificate SHA-256 digest:" | awk '{print $NF}')
+
+		# Check if any signature matches
+		local found=false
+		while IFS= read -r sig; do
+			if [ -n "$sig" ] && grep -qFx "$sig $pkg_name" sig.txt; then
+				found=true
+				break
+			fi
+		done <<<"$sigs"
+
+		# If no match found, add all new signatures
+		if [ "$found" = false ]; then
+			pr "Adding new signature(s) for $pkg_name to sig.txt"
+			while IFS= read -r sig; do
+				if [ -n "$sig" ] && ! grep -qFx "$sig $pkg_name" sig.txt; then
+					echo "$sig $pkg_name" >> sig.txt
+					pr "Added: $sig"
+				fi
+			done <<<"$sigs"
+		fi
+
+		return 0
 	fi
 }
 
@@ -875,6 +935,14 @@ build_rv() {
 			if ! dl_${dl_p} "${args[${dl_p}_dlurl]}" "$version" "$stock_apk" "$arch" "${args[dpi]}" "$get_latest_ver"; then
 				epr "ERROR: Could not download '${table}' from ${dl_p} with version '${version}', arch '${arch}', dpi '${args[dpi]}'"
 				continue
+			fi
+			# If APKPure downloaded with "latest" and extracted actual version, update our version variable
+			if [ "$dl_p" = "apkpure" ] && [ -n "${__APKPURE_ACTUAL_VERSION__-}" ]; then
+				version="${__APKPURE_ACTUAL_VERSION__}"
+				version_f=${version// /}
+				version_f=${version_f#v}
+				stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-${arch_f}.apk"
+				unset __APKPURE_ACTUAL_VERSION__
 			fi
 			break
 		done
