@@ -1,16 +1,18 @@
 # Config
 
 Adding another revanced app is as easy as this:
+
 ```toml
 [Some-App]
 apkmirror-dlurl = "https://www.apkmirror.com/apk/inc/app"
 # or uptodown-dlurl = "https://app.en.uptodown.com/android"
+# or apkpure-dlurl = "https://apkpure.com/app-name/com.package.name"
 ```
 
-## More about other options:
+## More about other options
 
-There exists an example below with all defaults shown and all the keys explicitly set.  
-**All keys are optional** (except download urls) and are assigned to their default values if not set explicitly.  
+There exists an example below with all defaults shown and all the keys explicitly set.
+**All keys are optional** (except download urls) and are assigned to their default values if not set explicitly.
 
 ```toml
 parallel-jobs = 1                    # amount of cores to use for parallel patching, if not set $(nproc) is used
@@ -18,6 +20,7 @@ compression-level = 9                # module zip compression level
 remove-rv-integrations-checks = true # remove checks from the revanced integrations
 
 patches-source = "revanced/revanced-patches" # where to fetch patches bundle from. default: "revanced/revanced-patches"
+                                                 # supports multiple sources separated by commas: "revanced/revanced-patches,anddea/revanced-patches"
 cli-source = "j-hc/revanced-cli"             # where to fetch cli from. default: "j-hc/revanced-cli"
 # options like cli-source can also set per app
 rv-brand = "ReVanced Extended" # rebrand from 'ReVanced' to something different. default: "ReVanced"
@@ -29,32 +32,66 @@ cli-version = "v5.0.0"       # 'latest', 'dev', or a version number. default: "l
 app-name = "SomeApp" # if set, release name becomes SomeApp instead of Some-App. default is same as table name, which is 'Some-App' here.
 enabled = true       # whether to build the app. default: true
 build-mode = "apk"   # 'both', 'apk' or 'module'. default: apk
+patches-source = "revanced/revanced-patches,anddea/revanced-patches" # multiple sources example
 
-# 'auto' option gets the latest possible version supported by all the included patches
-# 'latest' gets the latest stable without checking patches support. 'beta' gets the latest beta/alpha
-# whitespace seperated list of patches to exclude. default: ""
+#### Using local patch files or directories
+
+You can also point `patches-source` to a local file or directory. This is useful for testing or using custom patch bundles stored on disk.
+
+Examples:
+
+```toml
+# Single local patch file
+patches-source = "/home/user/patches/my-local-patches.rvp"
+
+# Directory containing multiple .rvp or .jar patch bundles (all found files will be used)
+patches-source = "/home/user/patches"
+
+# Mix local and GitHub sources (comma-separated)
+patches-source = "/home/user/patches,ReVanced/revanced-patches"
+```
+
+Notes:
+
+- Local paths can be absolute or relative to the repo root (e.g. `./local-patches`).
+- Supported local patch file types: `.rvp` and `.jar`.
+- If you edit scripts from Windows, convert them to LF before running in WSL (e.g. `dos2unix build.sh utils.sh`).
+
+### 'auto' option gets the latest possible version supported by all the included patches
+
+#### 'latest' gets the latest stable without checking patches support. 'beta' gets the latest beta/alpha
+
+#### whitespace seperated list of patches to exclude. default: ""
+
 version = "auto"     # 'auto', 'latest', 'beta' or a version number (e.g. '17.40.41'). default: auto
 
-# optional args to be passed to cli. can be used to set patch options
-# multiline strings in the config is supported
+## optional args to be passed to cli. can be used to set patch options
+
+## multiline strings in the config is supported
+
+```bash
 patcher-args = """\
   -OdarkThemeBackgroundColor=#FF0F0F0F \
   -Oanother-option=value \
   """
+```
 
+```bash
 excluded-patches = """\
   'Some Patch' \
   'Some Other Patch' \
   """
+```
 
+```toml
 included-patches = "'Some Patch'"                          # whitespace seperated list of non-default patches to include. default: ""
 include-stock = true                                       # includes stock apk in the module. default: true
 exclusive-patches = false                                  # exclude all patches by default. default: false
-apkmirror-dlurl = "https://www.apkmirror.com/apk/inc/app"
-uptodown-dlurl = "https://spotify.en.uptodown.com/android"
+apkmirror-dlurl = "<https://www.apkmirror.com/apk/inc/app>"
+apkpure-dlurl = "<https://apkpure.com/app-name/com.package.name>"  # supports apk, xapk, apks, zip, apkm formats
+uptodown-dlurl = "<https://spotify.en.uptodown.com/android>"
 module-prop-name = "some-app-magisk"                       # magisk module prop name.
 dpi = "360-480dpi"                               # used to select apk variant from apkmirror. default: nodpi
 arch = "arm64-v8a"                                         # 'arm64-v8a', 'arm-v7a', 'all', 'both'. 'both' downloads both arm64-v8a and arm-v7a. default: all
 riplib = true                                              # enables ripping x86 and x86_64 libs from apks with j-hc revanced cli. default: true
-
 ```
