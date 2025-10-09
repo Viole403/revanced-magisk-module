@@ -1,5 +1,6 @@
 enable-magisk-update = true # set this to false if you do not want to receive updates for the module in magisk app
 parallel-jobs = 1
+cli-source = "ReVanced/revanced-cli" # revanced-cli github repo
 
 # add 'enabled = false' for not patching a specific app or remove it from the config
 # see https://github.com/j-hc/revanced-magisk-module/blob/main/CONFIG.md for more detailed explanations
@@ -17,16 +18,16 @@ archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.y
 
 [Music]
 build-mode = "both"
-arch = "both"
+arch = "arm64-v8a"
 apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube-music"
 uptodown-dlurl = "https://youtube-music.en.uptodown.com/android"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.apps.youtube.music"
 
 [GooglePhotos]
 build-mode = "apk"
-arch = "both"
+arch = "arm64-v8a"
 version = "auto"
-# apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/photos/"
+apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/photos/"
 uptodown-dlurl = "https://google-photos.en.uptodown.com/android"
 
 [Spotify]
@@ -66,11 +67,10 @@ uptodown-dlurl = "https://twitch.en.uptodown.com/android"
 # archive-dlurl = "https://archive.org/download/jhc-apks/apks/tv.twitch.android.app"
 
 [Twitter]
-enabled = true
-apkmirror-dlurl = "https://www.apkmirror.com/apk/x-corp/twitter"
+enabled = false
 version = "auto"
 build-mode = "apk"
-# dpi = "120-640dpi"
+apkmirror-dlurl = "https://apkmirror.com/apk/twitter-inc/twitter/"
 # archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.twitter.android"
 
 [TikTok]
@@ -91,10 +91,13 @@ apkmirror-dlurl = "https://www.apkmirror.com/apk/smart-launcher-team/icon-pack-s
 
 [Duolingo]
 enabled = true
-uptodown-dlurl = "https://duolingo.en.uptodown.com/android"
-apkmirror-dlurl = "https://apkmirror.com/apk/duolingo/duolingo-duolingo/"
+version = "latest"
 arch = "arm64-v8a"
-apkmirror-dpi = "120-640dpi"
+patches-source = "Viole403/revanced-patches"
+apkpure-dlurl = "https://apkpure.com/duolingo-language-lessons/com.duolingo"
+# apkmirror-dlurl = "https://apkmirror.com/apk/duolingo/duolingo-duolingo/"
+# apkmirror-dpi = "nodpi"
+# uptodown-dlurl = "https://duolingo.en.uptodown.com/android"
 
 [Crunchyroll]
 enabled = true
