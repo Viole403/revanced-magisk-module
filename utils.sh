@@ -402,7 +402,6 @@ get_patch_last_supported_ver() {
 	if [ "$op" = "Any" ]; then return; fi
 	pcount=$(head -1 <<<"$op") pcount=${pcount#*(} pcount=${pcount% *}
 	if [ -z "$pcount" ]; then
-		epr "list-versions returned unexpected/empty output for '$first_patch_jar' (op='$op'). Falling back to latest."
 		return 0
 	fi
 	grep -F "($pcount patch" <<<"$op" | sed 's/ (.* patch.*//' | get_highest_ver || return 1
