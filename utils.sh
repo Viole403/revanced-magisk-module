@@ -647,7 +647,7 @@ get_apkpure_vers() {
 }
 dl_apkpure() {
 	local apkpure_dlurl=$1 version=$2 output=$3 arch=$4 _dpi=$5
-	local download_url pkg_name
+	local download_url pkg_name ver_param
 
 	# Extract package name from the stored response
 	pkg_name="$__APKPURE_PKG_NAME__"
@@ -656,27 +656,68 @@ dl_apkpure() {
 		return 1
 	fi
 
-	# Construct download URL based on version
+	# Set version parameter
 	if [ "$version" = "latest" ] || [ -z "$version" ]; then
-		download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=latest"
+		ver_param="latest"
 	else
-		# Try specific version
-		download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=${version}"
+		ver_param="${version}"
 	fi
 
-	pr "Downloading from APKPure: $download_url"
-
-	# Download to a temporary file first to detect format
 	local temp_dl="${output}.tmp"
-	if ! req "$download_url" "$temp_dl"; then
+	local download_success=false
+	local tried_formats=()
+
+	# Try XAPK endpoint first (bundles are more common for newer apps)
+	download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=${ver_param}"
+	pr "Trying APKPure XAPK: $download_url"
+	if req "$download_url" "$temp_dl" 2>/dev/null; then
+		# Verify it's a valid download (not an error page)
+		if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
+			download_success=true
+			tried_formats+=("XAPK")
+		else
+			rm -f "$temp_dl"
+			tried_formats+=("XAPK (invalid)")
+		fi
+	else
 		rm -f "$temp_dl"
+		tried_formats+=("XAPK (failed)")
+	fi
+
+	# If XAPK failed, try APK endpoint
+	if [ "$download_success" = false ]; then
+		download_url="https://d.apkpure.com/b/APK/${pkg_name}?version=${ver_param}"
+		pr "Trying APKPure APK: $download_url"
+		if req "$download_url" "$temp_dl" 2>/dev/null; then
+			# Verify it's a valid download
+			if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android"; then
+				download_success=true
+				tried_formats+=("APK")
+			else
+				rm -f "$temp_dl"
+				tried_formats+=("APK (invalid)")
+			fi
+		else
+			rm -f "$temp_dl"
+			tried_formats+=("APK (failed)")
+		fi
+	fi
+
+	# If both failed, return error
+	if [ "$download_success" = false ]; then
+		epr "APKPure download failed for ${pkg_name}. Tried: ${tried_formats[*]}"
 		return 1
 	fi
 
 	# Detect file type by checking magic bytes and content
 	local file_type=""
 	if file "$temp_dl" 2>/dev/null | grep -qi "zip"; then
-		file_type="bundle"
+		# Check if it's a bundle (XAPK/APKM) or just a plain APK in zip format
+		if unzip -l "$temp_dl" 2>/dev/null | grep -qi "\.apk"; then
+			file_type="bundle"
+		else
+			file_type="apk"
+		fi
 	elif file "$temp_dl" 2>/dev/null | grep -qi "apk\|android"; then
 		file_type="apk"
 	else
@@ -687,6 +728,8 @@ dl_apkpure() {
 			file_type="apk"
 		fi
 	fi
+
+	pr "APKPure download successful (${tried_formats[-1]}, detected as ${file_type})"
 
 	if [ "$file_type" = "bundle" ]; then
 		# It's a bundle (xapk/apks/apkm/zip) - merge it
@@ -729,11 +772,11 @@ patch_apk() {
 	local patch_params=""
 	for patch_file in $rv_patches_jars; do
 		if [ -f "$patch_file" ]; then
-			patch_params+="-p $patch_file "
+			patch_params+="-b $patch_file "
 		fi
 	done
 
-	local cmd="env -u GITHUB_REPOSITORY java -jar $rv_cli_jar patch $stock_input --purge -o $patched_apk $patch_params --keystore=ks.keystore \
+	local cmd="env -u GITHUB_REPOSITORY java -jar $rv_cli_jar patch $stock_input -p -o $patched_apk $patch_params --keystore=ks.keystore \
 --keystore-entry-password=123456789 --keystore-password=123456789 --signer=jhc --keystore-entry-alias=jhc $patcher_args"
 	if [ "$OS" = Android ]; then cmd+=" --custom-aapt2-binary=${AAPT2}"; fi
 	pr "$cmd"
