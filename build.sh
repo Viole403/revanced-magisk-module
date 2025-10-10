@@ -85,15 +85,9 @@ for table_name in $(toml_get_table_names); do
 	if ! RVP="$(get_rv_prebuilts "$cli_src" "$cli_ver" "$patches_src" "$patches_ver")"; then
 		abort "could not download rv prebuilts"
 	fi
-	# RVP returns: <cli-jar> <patch-file1> <patch-file2> ...
-	# read first token as cli jar, remaining as patch files
-	# split into words: first is cli jar, rest are patch files
-	set -- $RVP
-	rv_cli_jar="$1"
-	shift || :
-	rv_patches_rest="$*"
-	app_args[cli]="$rv_cli_jar"
-	app_args[ptjar]="$rv_patches_rest"
+	read -r rv_cli_jar rv_patches_jar <<<"$RVP"
+	app_args[cli]=$rv_cli_jar
+	app_args[ptjar]=$rv_patches_jar
 	if [[ -v cliriplib[${app_args[cli]}] ]]; then app_args[riplib]=${cliriplib[${app_args[cli]}]}; else
 		if [[ $(java -jar "${app_args[cli]}" patch 2>&1) == *rip-lib* ]]; then
 			cliriplib[${app_args[cli]}]=true
@@ -130,15 +124,17 @@ for table_name in $(toml_get_table_names); do
 		app_args[apkmirror_dlurl]=${app_args[apkmirror_dlurl]%/}
 		app_args[dl_from]=apkmirror
 	} || app_args[apkmirror_dlurl]=""
-	app_args[apkpure_dlurl]=$(toml_get "$t" apkpure-dlurl) && {
-		app_args[apkpure_dlurl]=${app_args[apkpure_dlurl]%/}
-		app_args[dl_from]=apkpure
-	} || app_args[apkpure_dlurl]=""
 	app_args[archive_dlurl]=$(toml_get "$t" archive-dlurl) && {
 		app_args[archive_dlurl]=${app_args[archive_dlurl]%/}
 		app_args[dl_from]=archive
 	} || app_args[archive_dlurl]=""
-	if [ -z "${app_args[dl_from]-}" ]; then abort "ERROR: no 'apkmirror_dlurl', 'apkpure_dlurl', 'uptodown_dlurl' or 'archive_dlurl' option was set for '$table_name'."; fi
+	app_args[apkpure_dlurl]=$(toml_get "$t" apkpure-dlurl) && {
+		app_args[apkpure_dlurl]=${app_args[apkpure_dlurl]%/}
+		app_args[apkpure_dlurl]=${app_args[apkpure_dlurl]%/versions}
+		app_args[apkpure_dlurl]=${app_args[apkpure_dlurl]%/download*}
+		app_args[dl_from]=apkpure
+	} || app_args[apkpure_dlurl]=""
+	if [ -z "${app_args[dl_from]-}" ]; then abort "ERROR: no 'apkmirror_dlurl', 'uptodown_dlurl', 'apkpure_dlurl' or 'archive_dlurl' option was set for '$table_name'."; fi
 	app_args[arch]=$(toml_get "$t" arch) || app_args[arch]="all"
 	if [ "${app_args[arch]}" != "both" ] && [ "${app_args[arch]}" != "all" ] && [[ ${app_args[arch]} != "arm64-v8a"* ]] && [[ ${app_args[arch]} != "arm-v7a"* ]]; then
 		abort "wrong arch '${app_args[arch]}' for '$table_name'"
@@ -148,7 +144,7 @@ for table_name in $(toml_get_table_names); do
 	app_args[dpi]=$(toml_get "$t" dpi) || app_args[dpi]="nodpi"
 	table_name_f=${table_name,,}
 	table_name_f=${table_name_f// /-}
-	app_args[module_prop_name]=$(toml_get "$t" module-prop-name) || app_args[module_prop_name]="${table_name_f}-jhc"
+	app_args[module_prop_name]=$(toml_get "$t" module-prop-name) || app_args[module_prop_name]="${table_name_f}-Viole403"
 
 	if [ "${app_args[arch]}" = both ]; then
 		app_args[table]="$table_name (arm64-v8a)"
@@ -182,7 +178,7 @@ if [ -z "$(ls -A1 "${BUILD_DIR}")" ]; then abort "All builds failed."; fi
 
 log "\nInstall [Microg](https://github.com/ReVanced/GmsCore/releases) for non-root YouTube and YT Music APKs"
 log "Use [zygisk-detach](https://github.com/j-hc/zygisk-detach) to detach root ReVanced YouTube and YT Music from Play Store"
-log "\n[revanced-magisk-module](https://github.com/j-hc/revanced-magisk-module)\n"
+log "\n[revanced-magisk-module](https://github.com/Viole403/revanced-magisk-module)\n"
 log "$(cat "$TEMP_DIR"/*-rv/changelog.md)"
 
 SKIPPED=$(cat "$TEMP_DIR"/skipped 2>/dev/null || :)
