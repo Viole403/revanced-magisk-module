@@ -75,24 +75,30 @@ abort() {
 
 get_rv_prebuilts() {
 	local cli_src=$1 cli_ver=$2 patches_src=$3 patches_ver=$4
-	pr "Getting prebuilts (${patches_src%/*})" >&2
-	local cl_dir=${patches_src%/*}
+
+	# Split comma-separated patches sources
+	IFS=',' read -ra patches_sources <<< "$patches_src"
+	local first_patches_src="${patches_sources[0]// /}"
+
+	pr "Getting prebuilts (${first_patches_src%/*})" >&2
+	local cl_dir=${first_patches_src%/*}
 	cl_dir=${TEMP_DIR}/${cl_dir,,}-rv
-	[ -d "$cl_dir" ] || mkdir -p "$cl_dir"
-	for src_ver in "$cli_src CLI $cli_ver revanced-cli" "$patches_src Patches $patches_ver patches"; do
+	mkdir -p "$cl_dir"
+
+	local patch_files=""
+
+	# First, get CLI
+	for src_ver in "$cli_src CLI $cli_ver revanced-cli"; do
 		set -- $src_ver
 		local src=$1 tag=$2 ver=${3-} fprefix=$4
 		local ext
 		if [ "$tag" = "CLI" ]; then
 			ext="jar"
 			local grab_cl=false
-		elif [ "$tag" = "Patches" ]; then
-			ext="rvp"
-			local grab_cl=true
 		else abort unreachable; fi
-		local dir=${src%/*}
-		dir=${TEMP_DIR}/${dir,,}-rv
-		[ -d "$dir" ] || mkdir -p "$dir"
+	local dir=${src%/*}
+	dir=${TEMP_DIR}/${dir,,}-rv
+	mkdir -p "$dir"
 
 		local rv_rel="https://api.github.com/repos/${src}/releases" name_ver
 		if [ "$ver" = "dev" ]; then
@@ -131,14 +137,123 @@ get_rv_prebuilts() {
 			tag_name=$(cut -d'-' -f3- <<<"$name")
 			tag_name=v${tag_name%.*}
 		fi
-		if [ "$tag" = "Patches" ]; then
+		echo -n "$file "
+	done
+
+	# Now get patches from all sources
+	for patches_source in "${patches_sources[@]}"; do
+		# Trim whitespace
+		patches_source="${patches_source// /}"
+		if [ -z "$patches_source" ]; then continue; fi
+
+		# Normalize common Windows-style paths so WSL can resolve them
+		# Accept forms like C:\path\to\file, C:/path/to/file, /c/path/to/file
+		local raw_ps="$patches_source"
+		local ps
+		ps="${raw_ps//\\/\/}"  # convert backslashes to slashes
+		if [[ "$ps" =~ ^[A-Za-z]:/ ]]; then
+			local drive="${ps:0:1}"
+			local rest="${ps:2}"
+			ps="/mnt/${drive,,}/${rest}"
+		elif [[ "$ps" =~ ^/[A-Za-z]/ ]]; then
+			local drive="${ps:1:1}"
+			local rest="${ps:2}"
+			ps="/mnt/${drive,,}/${rest}"
+		fi
+
+		# If the normalized path exists, prefer it; otherwise fall back to original input
+		local check_path
+		if [ -e "$ps" ]; then
+			check_path="$ps"
+		else
+			check_path="$patches_source"
+		fi
+
+		# If the patches_source exists as a local file or directory, accept local patches directly
+		if [ -e "$check_path" ]; then
+			if [ -f "$check_path" ]; then
+				case "$check_path" in
+					*.rvp|*.jar)
+						pr "Using local patch file: $check_path" >&2
+						patch_files+="$check_path "
+						echo "Local: $(basename "$check_path")" >>"${cl_dir}/changelog.md"
+						continue
+						;;
+					*)
+						pr "Skipping unsupported local file type: $check_path" >&2
+						continue
+						;;
+				esac
+			elif [ -d "$check_path" ]; then
+				pr "Searching local patches in directory: $check_path" >&2
+				for f in "$check_path"/*.rvp "$check_path"/*.jar; do
+					[ -f "$f" ] || continue
+					pr "Found local patch: $f" >&2
+					patch_files+="$f "
+					echo "Local: $(basename "$f")" >>"${cl_dir}/changelog.md"
+				done
+				continue
+			fi
+		fi
+
+		for src_ver in "$patches_source Patches $patches_ver patches"; do
+			set -- $src_ver
+			local src=$1 tag=$2 ver=${3-} fprefix=$4
+			local ext="rvp"
+			local grab_cl=true
+
+			local dir=${src%/*}
+			dir=${TEMP_DIR}/${dir,,}-rv
+			[ -d "$dir" ] || mkdir "$dir"
+
+			local rv_rel="https://api.github.com/repos/${src}/releases" name_ver
+			if [ "$ver" = "dev" ]; then
+				local resp
+				resp=$(gh_req "$rv_rel" -) || return 1
+				ver=$(jq -e -r '.[] | .tag_name' <<<"$resp" | get_highest_ver) || return 1;
+			fi
+			if [ "$ver" = "latest" ]; then
+				rv_rel+="/latest"
+				name_ver="*"
+			else
+				rv_rel+="/tags/${ver}"
+				name_ver="$ver"
+			fi
+
+			local url file tag_name name
+			file=$(find "$dir" -name "${fprefix}-${name_ver#v}.${ext}" -type f 2>/dev/null)
+			if [ -z "$file" ]; then
+				local resp asset name
+				resp=$(gh_req "$rv_rel" -) || return 1
+				tag_name=$(jq -r '.tag_name' <<<"$resp")
+				asset=$(jq -e -r ".assets[] | select(.name | endswith(\"$ext\"))" <<<"$resp") || return 1
+				url=$(jq -r .url <<<"$asset")
+				name=$(jq -r .name <<<"$asset")
+				file="${dir}/${name}"
+				gh_dl "$file" "$url" >&2 || return 1
+				echo "$tag: $(cut -d/ -f1 <<<"$src")/${name}  " >>"${cl_dir}/changelog.md"
+			else
+				grab_cl=false
+				local for_err=$file
+				if [ "$ver" = "latest" ]; then
+					file=$(grep -v '/[^/]*dev[^/]*$' <<<"$file" | head -1)
+				else file=$(grep "/[^/]*${ver#v}[^/]*\$" <<<"$file" | head -1); fi
+				if [ -z "$file" ]; then abort "filter fail: '$for_err' with '$ver'"; fi
+				name=$(basename "$file")
+				tag_name=$(cut -d'-' -f3- <<<"$name")
+				tag_name=v${tag_name%.*}
+			fi
+
 			if [ $grab_cl = true ]; then echo -e "[Changelog](https://github.com/${src}/releases/tag/${tag_name})\n" >>"${cl_dir}/changelog.md"; fi
-			if [ "$REMOVE_RV_INTEGRATIONS_CHECKS" = true ]; then
+			if [ "$REMOVE_RV_INTEGRATIONS_CHECKS" = true ] && [[ "$name" == *.rvp ]]; then
 				if ! (
 					mkdir -p "${file}-zip" || return 1
 					unzip -qo "${file}" -d "${file}-zip" || return 1
-					java -cp "${BIN_DIR}/paccer.jar:${BIN_DIR}/dexlib2.jar" com.jhc.Main "${file}-zip/extensions/shared.rve" "${file}-zip/extensions/shared-patched.rve" || return 1
-					mv -f "${file}-zip/extensions/shared-patched.rve" "${file}-zip/extensions/shared.rve" || return 1
+					# Only patch if the expected structure exists
+					if [ -f "${file}-zip/extensions/shared.rve" ]; then
+						java -cp "${BIN_DIR}/paccer.jar:${BIN_DIR}/dexlib2.jar" com.jhc.Main "${file}-zip/extensions/shared.rve" "${file}-zip/extensions/shared-patched.rve" || return 1
+						mv -f "${file}-zip/extensions/shared-patched.rve" "${file}-zip/extensions/shared.rve" || return 1
+					fi
 					rm "${file}" || return 1
 					cd "${file}-zip" || abort
 					zip -0rq "${CWD}/${file}" . || return 1
@@ -147,10 +262,12 @@ get_rv_prebuilts() {
 				fi
 				rm -r "${file}-zip" || :
 			fi
-		fi
-		echo -n "$file "
+
+			patch_files+="$file "
+		done
 	done
-	echo
+
+	echo "$patch_files"
 }
 
 set_prebuilts() {
@@ -216,7 +333,7 @@ _req() {
 	local ip="$1" op="$2"
 	shift 2
 	if [ "$op" = - ]; then
-		if ! curl -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 5 --retry 0 --fail -s -S "$@" "$ip"; then
+		if ! curl --tlsv1.2 -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 30 --retry 0 --fail -s -S "$@" "$ip"; then
 			epr "Request failed: $ip"
 			return 1
 		fi
@@ -228,7 +345,7 @@ _req() {
 			while [ -f "$dlp" ]; do sleep 1; done
 			return
 		fi
-		if ! curl -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 5 --retry 0 --fail -s -S "$@" "$ip" -o "$dlp"; then
+		if ! curl --tlsv1.2 -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 30 --retry 0 --fail -s -S "$@" "$ip" -o "$dlp"; then
 			epr "Request failed: $ip"
 			return 1
 		fi
@@ -258,7 +375,7 @@ semver_validate() {
 	[ ${#ac} = 0 ]
 }
 get_patch_last_supported_ver() {
-	local list_patches=$1 pkg_name=$2 inc_sel=$3 _exc_sel=$4 _exclusive=$5 # TODO: resolve using all of these
+	local list_patches=$1 pkg_name=$2 inc_sel=$3 _exc_sel=$4 _exclusive=$5 rv_cli_jar=$6 rv_patches_jars=$7
 	local op
 	if [ "$inc_sel" ]; then
 		if ! op=$(awk '{$1=$1}1' <<<"$list_patches"); then
@@ -277,13 +394,16 @@ get_patch_last_supported_ver() {
 			return
 		fi
 	fi
-	if ! op=$(java -jar "$rv_cli_jar" list-versions "$rv_patches_jar" -f "$pkg_name" 2>&1 | tail -n +3 | awk '{$1=$1}1'); then
+	local first_patch_jar=$(echo "$rv_patches_jars" | cut -d' ' -f1)
+	if ! op=$(java -jar "$rv_cli_jar" list-versions "$first_patch_jar" -f "$pkg_name" 2>&1 | tail -n +3 | awk '{$1=$1}1'); then
 		epr "list-versions: '$op'"
 		return 1
 	fi
 	if [ "$op" = "Any" ]; then return; fi
 	pcount=$(head -1 <<<"$op") pcount=${pcount#*(} pcount=${pcount% *}
-	if [ -z "$pcount" ]; then abort "unreachable: '$pcount'"; fi
+	if [ -z "$pcount" ]; then
+		return 0
+	fi
 	grep -F "($pcount patch" <<<"$op" | sed 's/ (.* patch.*//' | get_highest_ver || return 1
 }
 
@@ -297,10 +417,64 @@ isoneof() {
 merge_splits() {
 	local bundle=$1 output=$2
 	pr "Merging splits"
-	gh_dl "$TEMP_DIR/apkeditor.jar" "https://github.com/REAndroid/APKEditor/releases/download/V1.4.2/APKEditor-1.4.2.jar" >/dev/null || return 1
+	gh_dl "$TEMP_DIR/apkeditor.jar" "https://github.com/REAndroid/APKEditor/releases/download/V1.4.5/APKEditor-1.4.5.jar" >/dev/null || return 1
 	if ! OP=$(java -jar "$TEMP_DIR/apkeditor.jar" merge -i "${bundle}" -o "${bundle}.mzip" -clean-meta -f 2>&1); then
-		epr "Apkeditor ERROR: $OP"
-		return 1
+		# Save full apkeditor output to a log for debugging, but show a concise message to the user
+		mkdir -p "$TEMP_DIR" || :
+		log_file="$TEMP_DIR/$(basename "${bundle}").apkeditor.log"
+		printf '%s
+' "$OP" >"$log_file" 2>/dev/null || :
+		pr "Apkeditor failed to merge '${bundle}' (see: ${log_file}). Attempting unzip-based fallback."
+		# Apkeditor sometimes fails on certain bundle formats. Try a simple unzip-based fallback:
+		pr "Attempting fallback merge for ${bundle} (unzip-based)"
+		mkdir -p "${bundle}-zip-fallback"
+		if unzip -qo "${bundle}" -d "${bundle}-zip-fallback" 2>/dev/null || unzip -qo "${bundle}.apkm" -d "${bundle}-zip-fallback" 2>/dev/null; then
+			# search recursively for any apk files inside the extracted folder
+			mapfile -t apks < <(find "${bundle}-zip-fallback" -type f -iname "*.apk" 2>/dev/null || true)
+			if (( ${#apks[@]} )); then
+				if (( ${#apks[@]} == 1 )); then
+					pr "Fallback: found single APK ${apks[0]}, using it as output"
+					cp -f "${apks[0]}" "${output}"
+					rm -rf "${bundle}-zip-fallback"
+					return 0
+				else
+					pr "Fallback: found ${#apks[@]} APK files, zipping extracted contents"
+					(cd "${bundle}-zip-fallback" && zip -0rq "${CWD}/${bundle}.zip" .)
+					if isoneof "module" "${build_mode_arr[@]}"; then
+						patch_apk "${bundle}.zip" "${output}" "--exclusive" "${args[cli]}" "${args[ptjar]}"
+						local ret=$?
+					else
+						cp "${bundle}.zip" "${output}"
+						local ret=$?
+					fi
+					rm -rf "${bundle}-zip-fallback" "${bundle}.zip" || :
+					return $ret
+				fi
+			else
+				# No nested .apk files; check if the extracted folder looks like an APK contents
+				if find "${bundle}-zip-fallback" -maxdepth 1 -type f \( -iname "classes.dex" -o -iname "AndroidManifest.xml" \) | read -r _; then
+					pr "Fallback: archive contains APK contents (classes.dex/AndroidManifest.xml). Zipping contents."
+					(cd "${bundle}-zip-fallback" && zip -0rq "${CWD}/${bundle}.zip" .)
+					if isoneof "module" "${build_mode_arr[@]}"; then
+						patch_apk "${bundle}.zip" "${output}" "--exclusive" "${args[cli]}" "${args[ptjar]}"
+						local ret=$?
+					else
+						cp "${bundle}.zip" "${output}"
+						local ret=$?
+					fi
+					rm -rf "${bundle}-zip-fallback" "${bundle}.zip" || :
+					return $ret
+				else
+					epr "Fallback: no .apk files found inside ${bundle}"
+					rm -rf "${bundle}-zip-fallback"
+					return 1
+				fi
+			fi
+		else
+			epr "Fallback unzip failed for ${bundle}"
+			rm -rf "${bundle}-zip-fallback"
+			return 1
+		fi
 	fi
 	# this is required because of apksig
 	mkdir "${bundle}-zip"
@@ -406,8 +580,8 @@ dl_uptodown() {
 	local apparch
 	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
 	if [ "$arch" = all ]; then
-		apparch=('arm64-v8a, armeabi-v7a, x86, x86_64' 'arm64-v8a, armeabi-v7a')
-	else apparch=("$arch" 'arm64-v8a, armeabi-v7a, x86_64' 'arm64-v8a, armeabi-v7a, x86, x86_64' 'arm64-v8a, armeabi-v7a'); fi
+		apparch=('arm64-v8a, armeabi-v7a, x86, x86_64' 'arm64-v8a, armeabi-v7a, x86_64' 'arm64-v8a, armeabi-v7a')
+	else apparch=("$arch" 'arm64-v8a, armeabi-v7a, x86, x86_64' 'arm64-v8a, armeabi-v7a, x86_64' 'arm64-v8a, armeabi-v7a'); fi
 
 	local op resp data_code
 	data_code=$($HTMLQ "#detail-app-name" --attribute data-code <<<"$__UPTODOWN_RESP__")
@@ -432,7 +606,6 @@ dl_uptodown() {
 		for ((n = 1; n < 12; n += 2)); do
 			node_arch=$($HTMLQ ".content > p:nth-child($n)" --text <<<"$files" | xargs) || return 1
 			if [ -z "$node_arch" ]; then return 1; fi
-			pr "Found architecture variant: '$node_arch' (looking for: ${apparch[*]})"
 			if ! isoneof "$node_arch" "${apparch[@]}"; then continue; fi
 			data_file_id=$($HTMLQ "div.variant:nth-child($((n + 1))) > .v-report" --attribute data-file-id <<<"$files") || return 1
 			resp=$(req "${uptodown_dlurl}/download/${data_file_id}-x" -)
@@ -443,6 +616,11 @@ dl_uptodown() {
 	data_url=$($HTMLQ "#detail-download-button" --attribute data-url <<<"$resp") || return 1
 	if [ $is_bundle = true ]; then
 		req "https://dw.uptodown.com/dwn/${data_url}" "$output.apkm" || return 1
+		# sanity check: ensure the downloaded file is an archive and not an HTML error page
+		if grep -Iq "<html" "$output.apkm" 2>/dev/null; then
+			epr "Downloaded Uptodown bundle appears to be an HTML page (download failed or blocked)."
+			return 1
+		fi
 		merge_splits "${output}.apkm" "${output}"
 	else
 		req "https://dw.uptodown.com/dwn/${data_url}" "$output"
@@ -465,235 +643,20 @@ get_archive_resp() {
 }
 get_archive_vers() { sed 's/^[^-]*-//;s/-\(all\|arm64-v8a\|arm-v7a\)\.apk//g' <<<"$__ARCHIVE_RESP__"; }
 get_archive_pkg_name() { echo "$__ARCHIVE_PKG_NAME__"; }
-
-# -------------------- apkpure --------------------
-get_apkpure_resp() {
-	# Extract package name from URL pattern: https://apkpure.com/app-name/com.package.name
-	__APKPURE_PKG_NAME__=$(echo "${1}" | sed -n 's;.*/\([a-z0-9._]*\)$;\1;p')
-	if [ -z "$__APKPURE_PKG_NAME__" ]; then
-		epr "Could not extract package name from APKPure URL: ${1}"
-		return 1
-	fi
-	# We don't need to fetch the page since we can extract package from URL
-	__APKPURE_RESP__="ok"
-}
-get_apkpure_vers() {
-	# APKPure blocks automated requests, so we can't reliably list versions
-	# If we previously detected an actual version, return it; otherwise return "latest"
-	if [ -n "${__APKPURE_ACTUAL_VERSION__-}" ]; then
-		echo "$__APKPURE_ACTUAL_VERSION__"
-	else
-		echo "latest"
-	fi
-}
-dl_apkpure() {
-	local apkpure_dlurl=$1 version=$2 output=$3 arch=$4 _dpi=$5
-	local download_url pkg_name ver_param
-
-	# Extract package name from the stored response
-	pkg_name="$__APKPURE_PKG_NAME__"
-	if [ -z "$pkg_name" ]; then
-		epr "Could not extract package name from APKPure"
-		return 1
-	fi
-
-	# Set version parameter
-	if [ "$version" = "latest" ] || [ -z "$version" ]; then
-		ver_param="latest"
-	else
-		ver_param="${version}"
-	fi
-
-	local temp_dl="${output}.tmp"
-	local download_success=false
-	local tried_formats=()
-
-	# APKPure-specific download function (without --fail flag to handle redirects better)
-	apkpure_dl() {
-		local url=$1 out=$2
-		# Remove --fail flag for APKPure downloads as they use multiple redirects
-		if curl --tlsv1.2 -L -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 30 --retry 2 -s -S \
-			-H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0" \
-			"$url" -o "$out" 2>/dev/null; then
-			# Verify we got actual data (file size > 1KB)
-			if [ -f "$out" ]; then
-				local file_size=$(stat -c%s "$out" 2>/dev/null || stat -f%z "$out" 2>/dev/null || echo 0)
-				pr "Downloaded file size: ${file_size} bytes"
-				if [ "$file_size" -gt 1024 ]; then
-					# Check if it's an HTML error page or Cloudflare challenge
-					if head -c 200 "$out" | grep -qi "<!doctype html"; then
-						if head -c 500 "$out" | grep -qi "just a moment\|cloudflare\|checking your browser"; then
-							epr "APKPure blocked by Cloudflare protection (bot detection)"
-							epr "APKPure downloads are currently not working due to anti-bot measures"
-							epr "Please use alternative sources: apkmirror, uptodown, or archive"
-						else
-							pr "Downloaded HTML error page instead of APK/XAPK"
-						fi
-						return 1
-					fi
-					return 0
-				else
-					pr "File too small: ${file_size} bytes"
-				fi
-			fi
-		fi
-		return 1
-	}
-
-	# Try XAPK endpoint first (bundles are more common for newer apps)
-	download_url="https://d.apkpure.com/b/XAPK/${pkg_name}?version=${ver_param}"
-	pr "Trying APKPure XAPK: $download_url"
-	if apkpure_dl "$download_url" "$temp_dl"; then
-		# Verify it's a valid download (not an error page)
-		# Check using multiple methods: file command, magic bytes, and unzip test
-		local is_valid=false
-
-		# Method 1: Check with file command (if available)
-		if command -v file >/dev/null 2>&1; then
-			if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android\|java archive"; then
-				is_valid=true
-			fi
-		fi
-
-		# Method 2: Check ZIP magic bytes (PK signature)
-		if [ "$is_valid" = false ]; then
-			local magic_bytes=$(od -An -tx1 -N2 "$temp_dl" 2>/dev/null | awk '{$1=$1}1' | tr -d ' ')
-			if [ "$magic_bytes" = "504b" ] || [ "$magic_bytes" = "504B" ]; then
-				is_valid=true
-			fi
-		fi
-
-		# Method 3: Try to test as zip archive
-		if [ "$is_valid" = false ]; then
-			if unzip -t "$temp_dl" >/dev/null 2>&1 || unzip -l "$temp_dl" >/dev/null 2>&1; then
-				is_valid=true
-			fi
-		fi
-
-		if [ "$is_valid" = true ]; then
-			download_success=true
-			tried_formats+=("XAPK")
-		else
-			pr "XAPK validation failed (not a valid archive)"
-			rm -f "$temp_dl"
-			tried_formats+=("XAPK (invalid)")
-		fi
-	else
-		rm -f "$temp_dl"
-		tried_formats+=("XAPK (failed)")
-	fi
-
-	# If XAPK failed, try APK endpoint
-	if [ "$download_success" = false ]; then
-		download_url="https://d.apkpure.com/b/APK/${pkg_name}?version=${ver_param}"
-		pr "Trying APKPure APK: $download_url"
-		if apkpure_dl "$download_url" "$temp_dl"; then
-			# Verify it's a valid download
-			local is_valid=false
-
-			# Method 1: Check with file command (if available)
-			if command -v file >/dev/null 2>&1; then
-				if file "$temp_dl" 2>/dev/null | grep -qi "zip\|android\|java archive"; then
-					is_valid=true
-				fi
-			fi
-
-			# Method 2: Check ZIP magic bytes (PK signature)
-			if [ "$is_valid" = false ]; then
-				local magic_bytes=$(od -An -tx1 -N2 "$temp_dl" 2>/dev/null | awk '{$1=$1}1' | tr -d ' ')
-				if [ "$magic_bytes" = "504b" ] || [ "$magic_bytes" = "504B" ]; then
-					is_valid=true
-				fi
-			fi
-
-			# Method 3: Try to test as zip archive
-			if [ "$is_valid" = false ]; then
-				if unzip -t "$temp_dl" >/dev/null 2>&1 || unzip -l "$temp_dl" >/dev/null 2>&1; then
-					is_valid=true
-				fi
-			fi
-
-			if [ "$is_valid" = true ]; then
-				download_success=true
-				tried_formats+=("APK")
-			else
-				pr "APK validation failed (not a valid archive)"
-				rm -f "$temp_dl"
-				tried_formats+=("APK (invalid)")
-			fi
-		else
-			rm -f "$temp_dl"
-			tried_formats+=("APK (failed)")
-		fi
-	fi
-
-	# If both failed, return error
-	if [ "$download_success" = false ]; then
-		epr "APKPure download failed for ${pkg_name}. Tried: ${tried_formats[*]}"
-		return 1
-	fi
-
-	# Detect file type by checking magic bytes and content
-	local file_type=""
-	if file "$temp_dl" 2>/dev/null | grep -qi "zip"; then
-		# Check if it's a bundle (XAPK/APKM) or just a plain APK in zip format
-		if unzip -l "$temp_dl" 2>/dev/null | grep -qi "\.apk"; then
-			file_type="bundle"
-		else
-			file_type="apk"
-		fi
-	elif file "$temp_dl" 2>/dev/null | grep -qi "apk\|android"; then
-		file_type="apk"
-	else
-		# Fallback: check if it's a valid zip (bundles are zips)
-		if unzip -t "$temp_dl" >/dev/null 2>&1; then
-			file_type="bundle"
-		else
-			file_type="apk"
-		fi
-	fi
-
-	pr "APKPure download successful (${tried_formats[-1]}, detected as ${file_type})"
-
-	# If version was "latest", try to extract actual version before processing
-	local actual_version=""
-	if [ "$ver_param" = "latest" ]; then
-		if [ "$file_type" = "bundle" ]; then
-			# For bundles (XAPK), extract version from manifest.json
-			actual_version=$(unzip -p "$temp_dl" manifest.json 2>/dev/null | jq -r '.version_name // .versionName // empty' 2>/dev/null || echo "")
-		fi
-
-		if [ -n "$actual_version" ]; then
-			pr "Detected actual version from bundle manifest: $actual_version"
-			# Update output path to use actual version
-			local base_output="${output%-latest-*}"
-			local suffix="${output##*-latest-}"
-			output="${base_output}-${actual_version}-${suffix}"
-			__APKPURE_ACTUAL_VERSION__="$actual_version"
-		fi
-	fi
-
-	if [ "$file_type" = "bundle" ]; then
-		# It's a bundle (xapk/apks/apkm/zip) - merge it
-		mv "$temp_dl" "${output}.apkm"
-		if ! merge_splits "${output}.apkm" "$output"; then
-			epr "Failed to merge APKPure bundle"
-			rm -f "${output}.apkm"
-			return 1
-		fi
-	else
-		# It's a plain APK
-		mv "$temp_dl" "$output"
-	fi
-
-	return 0
-}
-get_apkpure_pkg_name() { echo "$__APKPURE_PKG_NAME__"; }
 # --------------------------------------------------
 
 patch_apk() {
-	local stock_input=$1 patched_apk=$2 patcher_args=$3 rv_cli_jar=$4 rv_patches_jar=$5
-	local cmd="env -u GITHUB_REPOSITORY java -jar $rv_cli_jar patch $stock_input --purge -o $patched_apk -p $rv_patches_jar --keystore=ks.keystore \
+	local stock_input=$1 patched_apk=$2 patcher_args=$3 rv_cli_jar=$4 rv_patches_jars=$5
+
+	# Handle multiple patch files separated by spaces
+	local patch_params=""
+	for patch_file in $rv_patches_jars; do
+		if [ -f "$patch_file" ]; then
+			patch_params+="-p $patch_file "
+		fi
+	done
+
+	local cmd="env -u GITHUB_REPOSITORY java -jar $rv_cli_jar patch $stock_input $patch_params -o $patched_apk --keystore=ks.keystore \
 --keystore-entry-password=123456789 --keystore-password=123456789 --signer=jhc --keystore-entry-alias=jhc $patcher_args"
 	if [ "$OS" = Android ]; then cmd+=" --custom-aapt2-binary=${AAPT2}"; fi
 	pr "$cmd"
@@ -706,19 +669,12 @@ patch_apk() {
 check_sig() {
 	local file=$1 pkg_name=$2
 	local sig
+	if grep -q "$pkg_name" sig.txt; then
+		# Get all signatures from the APK (apps can have multiple signers)
+		local sigs
+		sigs=$(java -jar "$APKSIGNER" verify --print-certs "$file" 2>&1 | grep "^Signer.*certificate SHA-256 digest:" | awk '{print $NF}')
 
-	# Get all signatures from the APK (apps can have multiple signers)
-	local sigs
-	sigs=$(java -jar "$APKSIGNER" verify --print-certs "$file" 2>&1 | grep "^Signer.*certificate SHA-256 digest:" | awk '{print $NF}')
-
-	if [ -z "$sigs" ]; then
-		# No signature found or APK is unsigned (might be missing META-INF)
-		return 0
-	fi
-
-	# Check if package exists in sig.txt
-	if grep -q "$pkg_name" sig.txt 2>/dev/null; then
-		# Package exists, check if any signature matches
+		# Check if any signature matches
 		local found=false
 		while IFS= read -r sig; do
 			if [ -n "$sig" ] && grep -qFx "$sig $pkg_name" sig.txt; then
@@ -727,31 +683,19 @@ check_sig() {
 			fi
 		done <<<"$sigs"
 
-		# If no match found, update with new signatures
+		# If no match found, add all new signatures
 		if [ "$found" = false ]; then
-			pr "Signature changed for $pkg_name, updating sig.txt"
-			# Remove old signatures for this package
-			sed -i.bak "/$pkg_name\$/d" sig.txt 2>/dev/null || sed "/$pkg_name\$/d" sig.txt > sig.txt.tmp && mv sig.txt.tmp sig.txt
-			# Add new signatures
+			pr "Adding new signature(s) for $pkg_name to sig.txt"
 			while IFS= read -r sig; do
-				if [ -n "$sig" ]; then
+				if [ -n "$sig" ] && ! grep -qFx "$sig $pkg_name" sig.txt; then
 					echo "$sig $pkg_name" >> sig.txt
-					pr "Added new signature: ${sig:0:16}...${sig: -16}"
+					pr "Added: $sig"
 				fi
 			done <<<"$sigs"
 		fi
-	else
-		# Package doesn't exist in sig.txt, add all signatures
-		pr "First time seeing $pkg_name, adding signature(s) to sig.txt"
-		while IFS= read -r sig; do
-			if [ -n "$sig" ]; then
-				echo "$sig $pkg_name" >> sig.txt
-				pr "Added signature: ${sig:0:16}...${sig: -16}"
-			fi
-		done <<<"$sigs"
-	fi
 
-	return 0
+		return 0
+	fi
 }
 
 build_rv() {
@@ -772,8 +716,8 @@ build_rv() {
 	[ "${args[exclusive_patches]}" = true ] && p_patcher_args+=("--exclusive")
 
 	local tried_dl=()
-	for dl_p in apkpure archive apkmirror uptodown; do
-		if [ -z "${args[${dl_p}_dlurl]:-}" ]; then continue; fi
+	for dl_p in archive apkmirror uptodown; do
+		if [ -z "${args[${dl_p}_dlurl]}" ]; then continue; fi
 		if ! get_${dl_p}_resp "${args[${dl_p}_dlurl]}" || ! pkg_name=$(get_"${dl_p}"_pkg_name); then
 			args[${dl_p}_dlurl]=""
 			epr "ERROR: Could not find ${table} in ${dl_p}"
@@ -788,12 +732,14 @@ build_rv() {
 		return 0
 	fi
 	local list_patches
-	list_patches=$(java -jar "$rv_cli_jar" list-patches "$rv_patches_jar" -f "$pkg_name" -v -p 2>&1)
+	# Use the first patch file for querying patch information
+	local first_patch_jar=$(echo ${args[ptjar]} | cut -d' ' -f1)
+	list_patches=$(java -jar "${args[cli]}" list-patches "$first_patch_jar" -f "$pkg_name" -v -p 2>&1)
 
 	local get_latest_ver=false
 	if [ "$version_mode" = auto ]; then
 		if ! version=$(get_patch_last_supported_ver "$list_patches" "$pkg_name" \
-			"${args[included_patches]}" "${args[excluded_patches]}" "${args[exclusive_patches]}"); then
+			"${args[included_patches]}" "${args[excluded_patches]}" "${args[exclusive_patches]}" "${args[cli]}" "$first_patch_jar"); then
 			exit 1
 		elif [ -z "$version" ]; then get_latest_ver=true; fi
 	elif isoneof "$version_mode" latest beta; then
@@ -805,8 +751,13 @@ build_rv() {
 	fi
 	if [ $get_latest_ver = true ]; then
 		if [ "$version_mode" = beta ]; then __AAV__="true"; else __AAV__="false"; fi
-		pkgvers=$(get_"${dl_from}"_vers)
-		version=$(get_highest_ver <<<"$pkgvers") || version=$(head -1 <<<"$pkgvers")
+		if pkgvers=$(get_"${dl_from}"_vers); then
+			version=$(get_highest_ver <<<"$pkgvers") || version=$(head -1 <<<"$pkgvers")
+		else
+			# If we can't get version list (e.g., APKPure scraping failed), use "latest"
+			pr "Could not retrieve version list, will use 'latest' for download"
+			version="latest"
+		fi
 	fi
 	if [ -z "$version" ]; then
 		epr "empty version, not building ${table}."
@@ -826,8 +777,8 @@ build_rv() {
 	version_f=${version_f#v}
 	local stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-${arch_f}.apk"
 	if [ ! -f "$stock_apk" ]; then
-		for dl_p in apkpure archive apkmirror uptodown; do
-			   if [ -z "${args[${dl_p}_dlurl]:-}" ]; then continue; fi
+		for dl_p in archive apkmirror uptodown; do
+			if [ -z "${args[${dl_p}_dlurl]}" ]; then continue; fi
 			pr "Downloading '${table}' from ${dl_p}"
 			if ! isoneof $dl_p "${tried_dl[@]}"; then get_${dl_p}_resp "${args[${dl_p}_dlurl]}"; fi
 			if ! dl_${dl_p} "${args[${dl_p}_dlurl]}" "$version" "$stock_apk" "$arch" "${args[dpi]}" "$get_latest_ver"; then
@@ -836,7 +787,27 @@ build_rv() {
 			fi
 			break
 		done
-		if [ ! -f "$stock_apk" ]; then return 0; fi
+		# If downloads failed, try a local fallback APK in $TEMP_DIR
+		if [ ! -f "$stock_apk" ]; then
+			# try to find candidate APKs in TEMP_DIR matching pkg_name and arch
+			mapfile -t _cands < <(find "$TEMP_DIR" -maxdepth 2 -type f \( -iname "${pkg_name}-*-${arch_f}.apk" -o -iname "${pkg_name}*${arch_f}*.apk" \) 2>/dev/null || true)
+			if (( ${#_cands[@]} )); then
+				# pick the newest by mtime
+				stock_apk=$(printf '%s
+' "${_cands[@]}" | xargs -d '\n' ls -1t 2>/dev/null | head -n1)
+				pr "Using local fallback APK: $stock_apk"
+				# try to derive version from filename e.g. pkgname-6.50.2-arm64-v8a.apk
+				base=$(basename "$stock_apk")
+				version_from_file=$(sed -n "s/^${pkg_name}-\(.*\)-${arch_f}.*$/\1/p" <<<"$base") || :
+				if [ -n "$version_from_file" ]; then
+					version="$version_from_file"
+					version_f=${version// /}
+					version_f=${version_f#v}
+				fi
+			else
+				return 0
+			fi
+		fi
 	fi
 	if ! OP=$(check_sig "$stock_apk" "$pkg_name" 2>&1) && ! grep -qFx "ERROR: Missing META-INF/MANIFEST.MF" <<<"$OP"; then
 		abort "apk signature mismatch '$stock_apk': $OP"
@@ -911,7 +882,7 @@ build_rv() {
 
 		module_config "$base_template" "$pkg_name" "$version" "$arch"
 
-		local rv_patches_ver="${rv_patches_jar##*-}"
+		local rv_patches_ver="${first_patch_jar##*-}"
 		module_prop \
 			"${args[module_prop_name]}" \
 			"${app_name} ${args[rv_brand]}" \
