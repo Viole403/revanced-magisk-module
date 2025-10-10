@@ -6,7 +6,6 @@ Adding another revanced app is as easy as this:
 [Some-App]
 apkmirror-dlurl = "https://www.apkmirror.com/apk/inc/app"
 # or uptodown-dlurl = "https://app.en.uptodown.com/android"
-# or apkpure-dlurl = "https://apkpure.com/app-name/com.package.name"
 ```
 
 ## More about other options
@@ -88,7 +87,6 @@ included-patches = "'Some Patch'"                          # whitespace seperate
 include-stock = true                                       # includes stock apk in the module. default: true
 exclusive-patches = false                                  # exclude all patches by default. default: false
 apkmirror-dlurl = "<https://www.apkmirror.com/apk/inc/app>"
-apkpure-dlurl = "<https://apkpure.com/app-name/com.package.name>"  # supports apk, xapk, apks, zip, apkm formats
 uptodown-dlurl = "<https://spotify.en.uptodown.com/android>"
 module-prop-name = "some-app-magisk"                       # magisk module prop name.
 dpi = "360-480dpi"                               # used to select apk variant from apkmirror. default: nodpi
